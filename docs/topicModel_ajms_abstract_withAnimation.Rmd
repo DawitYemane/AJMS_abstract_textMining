@@ -1,0 +1,430 @@
+---
+title: Text mining of abstracts from more than 30 years of publication of the _African Journal Marine Science_.
+author: "Dawit Yemane"
+date: '`r Sys.time()`'
+documentclass: "article"
+headr-includes:
+  - \usepackage{amsmath}
+output:
+  bookdown::html_document2:
+    toc: yes
+  pandoc_args: [
+      "--csl", "ices-journal-of-marine-science.csl" , "--citation-abbreviations", "abbreviations.json"
+      ]
+bibliography: 
+ - Refs-requiredLibs_Analysis.bib
+ - Refs-topicModel_Analysis_ajms.bib
+---
+
+```{r chnk1,eval=TRUE,echo=FALSE,cache=FALSE}
+## This will add a 'hook' for verbatim=TRUE
+## Thanks to https://ramnathv.github.io/posts/verbatim-chunks-knitr/
+library(knitr)
+hook_source_def = knit_hooks$get('source')
+knit_hooks$set(source = function(x, options){
+  if (!is.null(options$verbatim) && options$verbatim){
+    opts = gsub(",\\s*verbatim\\s*=\\s*TRUE\\s*", "", options$params.src)
+    bef = sprintf('<a name=\"test\"></a>\n\n    ```{r %s}\n', opts, "\n")
+    stringr::str_c(bef, paste(knitr:::indent_block(x, "    "), collapse = '\n'), "\n    ```\n")
+  } else {
+     hook_source_def(x, options)
+  }
+
+}
+)
+knitr::opts_chunk$set(message = FALSE,warning = FALSE,tidy=TRUE,tidy.opts=list(blank=FALSE, width.cutoff=75),highlight=TRUE,echo = FALSE,cache=TRUE,include = FALSE)
+
+```
+
+
+
+```{r chnk5tidy=TRUE,results='hide'}
+############################ Load the libraries ###########################
+libList <- c('readr','ggplot2','dplyr','tidytext','tidyr','stringr','tm','wordcloud','topicmodels','lubridate','ggrepel','ldatuning','captioner','knitr','xtable','pander',"bib2df","RColorBrewer",'gifski')
+
+check_and_install = function(libList){
+  missingLibs = libList[is.na(match(libList,rownames(installed.packages())))]
+  
+  if(length(missingLibs)>0){
+    install.packages(missingLibs)
+  }
+  invisible(suppressPackageStartupMessages(lapply(libList,library,character.only=T)))
+  
+  
+}
+
+check_and_install(libList)
+
+#lapply(libList, library,character.only=T)
+tabCaps=captioner(prefix='Table')
+figCaps=captioner(prefix='Figure')
+
+tabCaps(name='tab1',caption = 'List of the topics identified and potential interpretation')
+##Figure captions
+figCaps(name='fig1',caption="Word clouds based on all the papers published in _AJMS_ since inception in 1983")
+figCaps(name='fig2',caption="Word clouds of bigrams (word-pairs), based on the same set of abstracts as in Figure 1")
+figCaps(name='fig3',caption="Profiles of the metrics/algorithm, CaoJuan2009, used for the identification of optimal number of topics")
+figCaps(name='fig4',caption="Word clouds that characterise each topic identified; the first 12 topics")
+figCaps(name='fig5',caption="Word clouds that characterise each topic identified; the remaining 12 topics")
+figCaps(name='fig6',caption="Time-series of the numbers of publications that fall in each of the topics identified")
+figCaps(name='fig7',caption='Animation of Word clouds that characteise each of the 24 topic')
+
+```
+
+
+# Summary
+
+The _African Journal of Marine Science_ (_AJMS_) (formerly the _South African Journal of Marine Science_), as the only dedicated marine-focused journal on the continent, is one route of dissemination of scientific knowledge for local and regional scientists. Although the aims and scope of the journal provide a rough idea of what types of publication to expect to find in it, the range of topics is wide. This work is intended to: (i) demonstrate (albeit briefly) some of the potential uses/applications of quantitative literature review; (ii) identify optimal sets of themes into which all published papers can be grouped; and (iii) summarise their temporal patterns. This was done based on all the abstracts of publications in _AJMS_ since its first volume in 1983 up until this year. Topic modelling was applied to classify the abstracts into an optimal number of themes/topics. The result suggests the papers in _AJMS_ can optimally be classified into 24 themes/topics. Over the last 35 years the numbers of papers within most of the themes/topics remained relatively stable, but there were some exceptions. For example, the theme on harmful algal bloom was largely patchy and with periodic up-ticks, probably related to the publication of special issues. Another exception was the theme of fish biology, in which there was a gradual increase in the number papers. Although this work is generic and demonstrates only a few aspects of text mining, it provides a glimpse of the potential value of text mining as a method of quantitative literature review.
+
+
+# Background
+
+The review of existing literature is a starting point for all scientific studies as it provides a basis from which to identify gaps in knowledge (and hence to indicate what the new study intends to achieve) and to generate new hypotheses. It can even act as the main data source for a study (meta-analysis). Over time the total number of publications, in all scientific fields, has increased substantially, to a point where conducting an exhaustive literature review is becoming difficult. Currently, although not as a replacement but rather as a complement to the traditional literature review, the use of quantitative literature reviews (or text mining) is becoming a common occurrence (especially in the social and medical sciences). Quantitative literature review is broadly the combined use of automated text extraction and a range of machine learning (or data mining) tools to synthesize or extract relevant information from massive collections (ranging from tens of thousands to millions of publications) of abstracts or of the full content of published literature.
+
+
+Most research is largely based on what is known as structured data, of which there is a range of examples in all scientific disciplines, e.g. catch data from surveys (including species composition and size structure), dose-response data from experiments, …etc. But there is a large amount of information/knowledge locked in written documents (including both scientific and non-scientific publications) that is known as unstructured data. In the past, information from unstructured sources was synthesized manually, which was fine when dealing with limited numbers of publications but almost impossible when dealing with thousands or millions of publications. Although it is not common in ecology (nor in many of its subfields), quantitative synthesis of text data to generate insight is relatively common in the social and medical sciences. This has largely been made possible by: (i) the availability of online data (from different sources, e.g. publishers, data- or publication repositories, and others) that can be accessed programmatically using various analytic environments (e.g. R, Python and others); (ii) text processing; and (iii) machine-learning algorithms that are now widely available.
+
+
+The process of synthesizing/extracting of relevant information from text data is generally referred to as text mining. This usually includes a steps: (i) from programatically accessing of the required sets of text (e.g. lists of abstracts, email collections, tweets,...etc); (ii) preprocessing of the data (to exclude un-necessary characters/words); (iii) extracting characteristic sets of words; and (iv) applying range of modelling approach (e.g supervised and unsupervised classification, network modelling, ...etc.) to address pre-specified sets of questions [@carlos2015text]. Some of the applications of text mining in ecology have included the following: 
+
+- In the biomedical field - @westergaard2017text analysed 15 million full-text articles published over the period 1823 – 2016 that they extracted from Elsevier, Springer and an open-access component of _PMC_ (_Pub Med Central_). One focus of their work was to demonstrate the potential use of text mining to extract protein-protein associations, disease-gene associations and protein subcellular localisations from massive collections of published articles. 
+- In the field of ecology and evolution - @nunez2016automated introduced the concept of Automated Content Analysis (ACA) and its potential in ecological and evolutionary research. _ACA_ refers to the use of machine-learning tools for the qualitative and quantitative analysis of massive amounts of scientific literature. 
+- @nunez2017biotic, in the study of biotic-resistance, used ACA to conduct a comprehensive literature review of biotic resistance in the context of invasion biology in forest ecosystems. An example of the type of observation to emerge from the use of ACA was that seedling survival and recruitment was a prominent topic.
+
+The main aim of this work was to identify major themes across all papers published in the _(South) African Journal of Marine Science_, and trends in these themes over time. Abstracts published since the first volume of the journal in 1983 were collected from an online source and analyzed.
+
+```{r}
+### data and outuput storage location (raw bib file containing the literature) 
+dDir = '/dyStorage/Analyze_topics_ajms/rawData'
+outFDir = '/dyStorage/Analyze_topics_ajms/outFig_tabs'
+
+### reed the bibliographic data
+bib_ajms = bib2df(paste(dDir,'/','Afr_jMar_pubs.bib',sep=''))
+
+bib_ajms$new_journal = ifelse(str_detect(string = str_to_lower(bib_ajms$JOURNAL),pattern = '^afr'),'AJMS',
+                              ifelse(str_detect(string = str_to_lower(bib_ajms$JOURNAL),pattern = '^sou'),'SAJMS',NA))
+bib_ajms %>% 
+  select(YEAR, AUTHOR,TITLE,PAGES,ABSTRACT)%>% 
+  unnest()->bib_ajmsUnNest
+
+
+bib_ajms%>%filter(!is.na(bib_ajms$new_journal))%>%select(YEAR, ABSTRACT)%>%rename(Year=YEAR,Abstract=ABSTRACT)%>%
+  arrange(desc(-Year))%>%filter(!is.na(Abstract))->bib_ajmsSel
+tab_yr =  table(bib_ajmsSel$Year)
+nP_yrs = sapply(1:length(unique(bib_ajmsSel$Year)), function(x,nP) {paste('p',1:nP[x],sep='')},nP=tab_yr)%>%unlist()
+ind_docs = 1:nrow(bib_ajmsSel)
+bib_ajmsSel<-bib_ajmsSel%>%mutate(Paper = nP_yrs)%>%select(Year,Paper,Abstract)
+
+#### additional stop words 
+add_stop = data.frame(word=c('en','cent','mm','m','al','textperiodcentered','van','de',
+                             'cm','nisc',"pty",'sd','ac',"lg","backslash",'textless','textgreater','textcopyright'),
+                      stringsAsFactors = F)
+
+### create bigrams
+bib_ajmsTidy_bigram = bib_ajmsSel%>%unnest_tokens(bigram,Abstract,token = 'ngrams',n=2)
+
+### split bigrams for cleanup
+bib_ajmsTidy_bigram2 <- bib_ajmsTidy_bigram %>%
+  separate(bigram, c("word1", "word2"), sep = " ")
+
+###  filter and remove stop words (and their corresponding pair)
+bigrams_filtered <- bib_ajmsTidy_bigram2 %>%
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word) %>%filter(!word1 %in% add_stop$word)%>%
+  filter(!word2 %in% add_stop$word) %>%filter(!str_detect(word1,'[[:digit:]]|[[:punct:]]'))%>%
+  filter(!str_detect(word2,'[[:digit:]]|[[:punct:]]'))
+
+
+# new bigram counts:
+bigram_counts <- bigrams_filtered %>%
+  count(word1, word2, sort = TRUE)
+
+## combining the final sets of bigrams
+bigrams_united <- bigrams_filtered %>%
+  unite(bigram, word1, word2, sep = " ")
+
+## count bigrams
+bigrams_unitedCopunt <- bigrams_united%>%count(bigram,sort = TRUE)
+
+############################ processing text (single words) #######################
+############## tidytext processing of the abstracts 
+bib_ajmsSel$document <- paste(bib_ajmsSel$Year,bib_ajmsSel$Paper,sep = '_')
+bib_ajmsTidy = bib_ajmsSel%>%unnest_tokens(word,Abstract)
+
+
+bib_clean1 <- bib_ajmsTidy%>%anti_join(stop_words)
+bib_clean1a <- bib_clean1%>%anti_join(add_stop);bib_clean1a$word[bib_clean1a$word=='demersus']='demersal'
+bib_clean1b <-bib_clean1a[!str_detect(bib_clean1a$word,'[[:digit:]]|[[:punct:]]'),]
+bib_clean2 <- bib_clean1b[,-c(1,2)]%>%group_by(document)%>%filter(word!='')%>%count(word,sort = TRUE)
+#bib_clean2$Year = as.character(bib_clean2$Year)
+### create document term matrix (dtm) from the cleaned text
+bib_dtm <-bib_clean2%>%cast_dtm(document,word,n)
+
+bib_ajmsSel_2 = bib_ajmsSel[bib_ajmsSel$document%in%unique(bib_clean2$document),]
+
+bib_cleanAll <- bib_clean1b[,-c(1,2)]%>%filter(word!='')%>%count(word,sort = TRUE)
+
+```
+
+```{r,eval=FALSE}
+### Use ldatuning identify optimal number of themes (topics)
+
+n_tops = 5:50
+Mtrics = c("CaoJuan2009", "Arun2010")#, "Deveaud2014","Griffiths2004") 
+system.time(opt_topics <- FindTopicsNumber(dtm = bib_dtm,topics = n_tops,metrics = Mtrics,mc.cores = 6,verbose = TRUE))
+FindTopicsNumber_plot(opt_topics)
+
+### fit LDA based on the optimal number of themes/topic identified above
+system.time(top_24 <- LDA(x = bib_dtm,k = 24,control = list(seed = 1235)))
+
+################# Save model selection result and the final model fitted ####################
+save(list=c('opt_topics','top_24'),file=paste(outFDir,'/','model_selectionFit.RData',sep=''))
+
+```
+
+```{r,results='hide'}
+
+load(paste(outFDir,'/','model_selectionFit.RData',sep=''))
+
+## word probability for each topic and term combination (probability a word/term being generated from a topic) (beta)
+tidy_top_24b <-tidy(top_24) 
+## As LDA models each document as being made of mixture of topics and each topic being made of a mixture of terms/word.
+## We can also compute the probability for each combination of document and topic. The probability that terms/words in
+## each document are from a particular topic (gamma). Can be seen each document is made of mixture different proportion 
+## of the different topics
+
+tidy_top_24g <- tidy(top_24,matrix='gamma') 
+
+### process extracted results
+abs_top24_beta <- tidy_top_24b %>%
+  group_by(topic) %>%
+  top_n(10, beta) %>%
+  ungroup() %>%
+  arrange(topic,-beta)
+abs_top24_beta
+
+abs_top24_gamma <-tidy_top_24g%>%
+  separate(document,c("Year","paper"),sep = '_',convert = TRUE)
+
+### extract terms and topics from the fitted LDA model
+terms24 = terms(top_24,5)
+topics24 = topics(top_24)
+
+##
+posterior_24 = posterior(top_24)
+wt_24 = as.data.frame(t(posterior_24$terms)) 
+wt_24L = wt_24 %>%
+  mutate(word = rownames(wt_24)) %>%
+  tidyr::gather(topic, weight, -word) 
+
+
+######## Frequency of occurrence of topics  
+terms_24 <- apply(terms24, MARGIN = 2, paste, collapse = ", ")
+
+topicsAbs_24 <- data.frame(document=bib_ajmsSel_2$document, topic=topics24)
+
+topicAbs_24_sep <- topicsAbs_24%>%separate(document,c('Year','paper'),sep = '_',convert = TRUE)
+
+terms24_df = terms_24%>%as.data.frame(stringsAsFactors=FALSE)%>%rename(keys = '.')%>%
+  mutate(topic = 1:24,topic_key=paste(topic,": ",keys,sep=''))
+topicAbs_24_sep_j = topicAbs_24_sep%>%left_join(terms24_df[,c(2:3)])%>%arrange(desc(topic))
+topicAbs_24_sep_j$topic_key <-reorder(factor(topicAbs_24_sep_j$topic_key),X = topicAbs_24_sep_j$topic)
+
+```
+
+
+
+# Methods
+
+The data-analysis approach adopted here is commonly used for the analysis of text in various disciplines: e.g. quantitative literature studies; social-media text mining for marketing; biomedical science; social and economic studies; ecology; and others. The process of text mining starts with: (i) accessing the text data (usually done programmatically from providers that allow this); (ii) reading and processing text data (depending on the type of the text data, e.g. pdf, simple text, tweets – various methods of cleaning and processing are required); (iii) exploratory analysis (usually entails summarising the frequency of word usage and can be done in different ways, with the creation of word clouds being the most common), which provides an indication of the content of the collection of text; and (iv) depending on the study objective, the application of different types of modelling. Usually there is an interest in extracting from the collection of text data the underlying structure – when this exists – as sets of topics/themes. There are sets of models/algorithms that are commonly utilized for this purpose and that are generally referred to as _topic models_ or _concept mapping models_ [@ponweiser2012latent; @nunez2016automated]. 
+
+
+The most common topic model is Latent Dirichlet Allocation (LDA), which is widely used across a range of disciplines [@silge2016tidytext; @ponweiser2012latent]. Topic modelling is part of a class of classification models known as unsupervised classification methods. In principle, topic modelling is the same as the clustering methods applied to numerical data. LDA treats each set of documents (in this case the collection of abstracts of papers published in _AJMS_) as a mixture of topics and each topic as a mixture of words. This in turn allows documents to overlap in terms of their content. These aspects/principles of LDA are expanded on below [after  @silge2016tidytext]:
+
+ - Every topic is a mixture of words: For example, in the context of the Benguela system, one could think of a two-topic model in a paper that deals with different aspects of the system, with Topic1 being physical oceanography and Topic2, small-pelagic fish dynamics. Topic1 one could be described by words such as _upwelling_, _current_, _temperature_, _Agulhas Bank_ and _wind_. Topic2, on the other hand, could be described by _sardine_, _anchovy_, _spawning_, _recruitment_, _temperature_ and _Agulhas Bank_. The two topics would then share words such as _temperature_ and _Agulhas Bank_. 
+ - Every document is a mixture of topics: One can think of each document as consisting of different topics in varying proportions. If we consider the above example of a two-topic model, we might note that Document1 consists of, say, 20% Topic1 and 80% Topic2. Similarly, all the remaining documents could be split compositionally into the different topics.
+
+To use _LDA_ one needs to specify the desired numbers of topics/themes into which to split the text collection. Thus one needs to first determine the optimal number of topics in the collection. There is a range of algorithms/metrics that one can use for this purpose: *Griffiths2004* [@griffiths2004finding],  *CaoJuan2009* [@cao2009density],*Arun2010* [@arun2010finding],*Deveaud2014* [@deveaud2014accurate]). The automated method of topic selection employed here used the CaoJuan2009 algorithm in the _ldatuning_ package [@R-ldatuning] in R [@R-base]. In addition a number R packages were used to read, process, analyze and visualize the results [@R-tidytext; @R-topicmodels; @R-wordcloud; @R-tm; @R-xtable; @R-knitr; @R-bib2df; @R-stringr].
+
+
+## Data analysis
+
+The whole process from data collection to analysis can be summarised as follows:
+
+ - 1) The abstracts used in this analysis were extracted using a Mendeley desktop [http://www.mendeley.com/]. Once all the abstracts of papers published since the first volume of AJMS were collected, they were exported as a BibTeX file (which can be read in R).
+ - 2) The content of the .bib file was read and converted to a data frame.
+ - 3) Standard text-mining approaches were applied to first split each abstract into words, then to remove ‘stop’ words (in the jargon of text mining these are words that are unnecessary e.g. _is_, _was_, _are_, _to_, _and_, as well as numbers, punctuation, ... etc.).
+ - 4) An exploratory analysis of the collection of words was conducted (e.g. single-word word clouds and pairs-of-words word clouds or bigram clouds)
+ - 5) Topic modelling was performed (this included selection of the optimal number of topics, fitting LDA, and extracting and summarising the results) 
+ 
+
+# Result and discussions
+
+`r figCaps('fig1',display='cite')` shows the word clouds based on all the abstacts. It highlighs that in most of the publications the most common words are _species, south, coast, cape, data, distribution, management_. This suggests that most of the publications are from, or focused on, the marine environment of South(ern) Africa. This becomes even clearer when looking at the bigram word-cloud plot `r figCaps('fig2',display='cite')`. The bigram plot shows the frequency of occurrence of word pairs – words that occur next to each other. It can clearly be seen that most of the publications are South(ern) African-focused marine studies. But given that _AJMS_ was initially the only local marine-focused research outlet it is not surprising to see this.
+
+ 
+
+```{r chunkF1, fig.align="center",include=TRUE}
+n3=400
+pal3 <- rep(brewer.pal(9, 'Greens'), each = ceiling(n3 / 9))[n3:1]
+par(mar=c(1,1,3,1),mgp=c(0.2,0.2,1))
+with(bib_cleanAll[1:n3, ], 
+     wordcloud(word, freq = n, random.order = FALSE, 
+               ordered.colors = TRUE,colors = pal3))
+
+```
+`r figCaps('fig1')`
+
+
+
+```{r chunkF2, fig.align="center",include=TRUE}
+n3=400
+pal3 <- rep(brewer.pal(9, 'Greens'), each = ceiling(n3 / 9))[n3:1]
+
+par(mar=c(1,1,3,1),mgp=c(0.2,0.2,1))
+with(bigrams_unitedCopunt[1:n3, ], 
+     wordcloud(bigram, freq = n, random.order = FALSE, 
+               ordered.colors = TRUE,colors = pal3))
+
+```
+`r figCaps('fig2')`
+
+
+In total 24 themes/topics were identified using the _CaoJuan2009_ metric, a minimization metrics, `r figCaps('fig3',display='cite')`. 
+
+
+```{r chunkF3, fig.align="center",include=TRUE}
+FindTopicsNumber_plot(opt_topics[,1:2])
+```
+`r figCaps('fig3')`
+
+
+The word clouds (sets of words) that characterise each of the topics/themes are shown in `r figCaps('fig4',display='cite')` for first 12 topics and in `r figCaps('fig5',display='cite')`  for the remaining 12 topics. Time-series of the numbers of papers on each of the topics are given in `r figCaps('fig6',display='cite')`. As can be seen from `r figCaps('fig6',display='cite')`,for most of the themes/topics identified the numbers of papers were variable but largely stable. There were some exceptions, however. For example, the numbers of papers related to harmful algal blooms were largely patchy with periodic up-ticks, some of which might potentially be linked to special issues on the topic. On the other hand, there was a gradual increase in the number of papers related to the theme/topic of generic fish biology. 
+
+
+```{r chunkF4, fig.align="center",include=TRUE}
+n2a=50
+palette='Greens'
+pal2a <- rep(brewer.pal(9, palette), each = ceiling(n2a / 9))[n2a:1]
+
+par(mfrow=c(3,4),mar=c(0,1,3,1),mgp=c(0.2,0.2,1))
+for(i in 1:12){
+  #tiff('word_clouds_for_topic_',i)
+  wt3_L = wt_24L %>%
+    filter(topic == i) %>%
+    arrange(desc(weight))
+  
+  with(wt3_L[1:n2a, ], 
+       wordcloud(word, freq = weight, random.order = FALSE, scale = c(2,0.2),
+                 ordered.colors = TRUE, colors = pal2a))
+  mtext(paste('Topic_',i,sep=''), cex = 0.6,col = 'blue')  
+}
+
+```
+`r figCaps('fig4')`
+
+
+
+
+
+
+```{r chunkF5, fig.align="center",include=TRUE}
+n2a=50
+palette='Greens'
+pal2a <- rep(brewer.pal(9, palette), each = ceiling(n2a / 9))[n2a:1]
+
+par(mfrow=c(3,4),mar=c(0,1,3,1),mgp=c(0.2,0.2,1))
+for(i in 13:24){
+  #tiff('word_clouds_for_topic_',i)
+  wt3_L <- wt_24L %>%
+    filter(topic == i) %>%
+    arrange(desc(weight))
+  with(wt3_L[1:n2a, ], 
+       wordcloud(word, freq = weight, random.order = FALSE, scale = c(2,0.2),
+                 ordered.colors = TRUE, colors = pal2a))
+  mtext(paste('Topic_',i,sep=''), cex = 0.6,col = 'blue')  
+}
+
+```
+`r figCaps('fig5')`
+
+```{r chunkF6,fig.align="center",include=TRUE}
+ggplot(topicAbs_24_sep_j,aes(Year,..count..))+geom_bar()+facet_wrap(~topic_key,nrow = 5)+theme_bw()+
+  theme(strip.text.x = element_text(size=3.4),axis.text = element_text(size=4),axis.title = element_text(size=5))
+```
+`r figCaps('fig6')`
+
+`r figCaps('fig7',display='cite')` shows animations of the word clouds that characterize each of the 24 topics.
+
+```{r chunkF7,fig.align="center",include=TRUE,animation.hook='gifski'}
+n=100
+
+palette='Greens'
+pal <- rep(brewer.pal(9, palette), each = ceiling(n / 9))[n:1]
+
+
+par(mar=c(1,1,3,1),mgp=c(0.2,0.2,1))
+for(i in 1:24){
+  #tiff('word_clouds_for_topic_',i)
+  wt3_L <- wt_24L %>%
+    filter(topic == i) %>%
+    arrange(desc(weight))
+  with(wt3_L[1:n, ], 
+       wordcloud(word, freq = weight, random.order = FALSE, 
+                 ordered.colors = TRUE, colors = pal))
+  mtext(paste('Topic_',i,sep=''), cex = 0.6,col = 'blue')  
+}
+
+```
+`r figCaps('fig7')`
+
+
+The final sets of topics/themes identified can potentially be interpreted as in `r tabCaps('tab1',display='cite')`.
+
+
+```{r}
+
+topicN = paste('Topic',1:24,sep='_')
+topicT = c('Benguela and Agulhas current with empahsis on upwelling related physical processes',
+           'Estaurie/estuarine related catches, using e.g. seine nets, of estuarie associated fish species',
+           'Biology and various fisheries aspects of sharks',
+           'Commercial fisheries and their management',
+           'Abundance, diversity and various aspects of different taxons (species)',
+           'South and west coast lobster: their abundance, distribution, diet ...etc',
+           'Stock assessment models, approaches and management of marine resources',
+          'Species/population distribution and genetics',
+          'Small pelagic focused: on the spawning, biomass,and recruitment of sardine and anchovy',
+          'Generic fish biology: on fitting growth curves, comparing growth rate by sex,...etc',
+          'On tag and re-capture studies and also in relation to the sardine run',
+          'Fur-seal dynamic in relation to physical processes (upwelling) and productivity',
+          'On marine mammals (humpback whales dophins) in southern africa: sighting, feeding, suvreys',
+          'Trophic ecology off the west and southrn africa',
+          'Squid/cephlopod focused: Diet, spwawning',
+          'On Seabird/penguin rehabilitation',
+          'fish behavior studies based on tagging',
+          'On the dynamics of harmful algal blooms, potential consequences',
+          'On marine protected areas with special emphasis on the KZN coast',
+          'The abalone fishery',
+          'Biological oceanography: production in relation to nutrient (nitrogen), light and oxygen dynamics',
+          'Coastals ecosystem focused: kelp bed ecosystems, rocky shores, eelgrass ...etc',
+          'On Penguin colonies: work on the dynamics of breeding colonies',
+          'Management of marine resources: issue of mpas and fisheries')
+tTab <- data.frame(Topic=topicN,Interpretation=topicT)
+sumAll_Form = xtable(tTab,sanitize.text.function = function(x) {x})
+
+
+```
+
+
+`r tabCaps('tab1')`
+```{r,results='markup',include=TRUE}
+#kable(sumAll_Form,row.names = F,align = 'l')
+#print(xtable(sumAll_Form),type='latex',align='l')
+pander(tTab)
+```
+
+#References
+
+```{r}
+knitr::write_bib(c('base','readr','ggplot2','dplyr','tidytext','tidyr','stringr','tm','wordcloud','topicmodels','lubridate','ggrepel','ldatuning','captioner','knitr','xtable','pander','bib2df'), 'Refs-requiredLibs_Analysis.bib')
+```
